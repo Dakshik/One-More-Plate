@@ -5,8 +5,8 @@ import { buildPickupSMS, sendSMS } from '../lib/sms';
 import { useApp } from '../lib/store';
 import { GeminiCard, Tag, Button, Eyebrow } from './UI';
 import type { FoodCondition, FoodPost, GeminiPostAnalysis } from '../types';
-import { NEWARK_CENTER, REGISTERED_VOLUNTEERS, SHELTERS } from '../data/seed';
-import { getNearestShelter } from '../lib/geo';
+import { REGISTERED_VOLUNTEERS, SHELTERS } from '../data/seed';
+import { getNearestShelter, resolveRestaurantDetails } from '../lib/geo';
 
 type PostState = 'form' | 'processing' | 'result';
 
@@ -18,7 +18,7 @@ const PROC_STEPS = [
 ];
 
 export default function PostTab() {
-  const { setActiveTab } = useApp();
+  const { setActiveTab, showToast } = useApp();
   const [state, setState] = useState<PostState>('form');
   const [procStep, setProcStep] = useState(0);
   const [analysis, setAnalysis] = useState<GeminiPostAnalysis | null>(null);
@@ -45,6 +45,14 @@ export default function PostTab() {
     const rPortions = parseInt(portions) || 20;
     const rTime = fmtTime(time);
 
+    const restaurantDetails = await resolveRestaurantDetails(rName);
+    if (!restaurantDetails.location) {
+      showToast('Could not find that restaurant on Maps. Use the exact restaurant name.');
+      return;
+    }
+    const restaurantLocation = restaurantDetails.location;
+    const restaurantAddress = restaurantDetails.formattedAddress || `${rName}, Newark, DE`;
+
     setState('processing');
     setProcStep(0);
 
@@ -54,7 +62,7 @@ export default function PostTab() {
     }
 
     const acceptingShelters = SHELTERS.filter(s => s.acceptingNow);
-    const targetShelter = getNearestShelter(NEWARK_CENTER, acceptingShelters.length ? acceptingShelters : SHELTERS);
+    const targetShelter = getNearestShelter(restaurantLocation, acceptingShelters.length ? acceptingShelters : SHELTERS);
     setTargetShelterName(targetShelter.name);
     const result = await analyzeAndStructureFoodPost(rName, rFood, rPortions, rTime, condition, targetShelter.name);
     setAnalysis(result);
@@ -62,8 +70,8 @@ export default function PostTab() {
     const post: FoodPost = {
       id: Date.now().toString(),
       restaurantName: rName,
-      restaurantAddress: `${rName}, Newark, DE 19711`,
-      restaurantLocation: NEWARK_CENTER,
+      restaurantAddress,
+      restaurantLocation,
       foodDescription: rFood,
       portions: rPortions,
       pickupBy: rTime,
@@ -75,8 +83,8 @@ export default function PostTab() {
 
     const saved = await addPostToDb({
       restaurantName: rName,
-      restaurantAddress: `${rName}, Newark, DE 19711`,
-      restaurantLocation: NEWARK_CENTER,
+      restaurantAddress,
+      restaurantLocation,
       foodDescription: rFood,
       portions: rPortions,
       pickupBy: rTime,
@@ -132,7 +140,7 @@ export default function PostTab() {
           <Eyebrow>Closing up? Tell us what's left.</Eyebrow>
           <div className="field">
             <label>Restaurant</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Harvest Moon Brewing" />
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Caffe Gelato" />
           </div>
           <div className="field">
             <label>What do you have?</label>

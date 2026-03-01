@@ -3,7 +3,7 @@ import { usePosts, claimPostInDb } from '../lib/db';
 import { useApp } from '../lib/store';
 import { Eyebrow, Chip } from './UI';
 import type { FoodPost } from '../types';
-import { getNearestShelter, resolveRestaurantLocation } from '../lib/geo';
+import { getNearestShelter, resolveRestaurantDetails } from '../lib/geo';
 import { SHELTERS } from '../data/seed';
 import { buildAcceptedRunSMS, sendSMS } from '../lib/sms';
 
@@ -18,8 +18,12 @@ function FeedCard({ post }: { post: FoodPost }) {
   const { user, showToast, claimPost } = useApp();
 
   const handleClaim = async () => {
-    const resolvedLocation = await resolveRestaurantLocation(post.restaurantName, post.restaurantAddress);
-    const postWithLocation = resolvedLocation ? { ...post, restaurantLocation: resolvedLocation } : post;
+    const details = await resolveRestaurantDetails(post.restaurantName, post.restaurantAddress);
+    const postWithLocation = {
+      ...post,
+      restaurantLocation: details.location ?? post.restaurantLocation,
+      restaurantAddress: details.formattedAddress || post.restaurantAddress,
+    };
     await claimPostInDb(post.id, user.firstName);
     claimPost(postWithLocation, user.firstName);
     showToast('Run claimed! Opening delivery tracker…');
@@ -69,8 +73,12 @@ export default function FeedTab() {
     : null;
 
   const handleQuickAccept = async (post: FoodPost) => {
-    const resolvedLocation = await resolveRestaurantLocation(post.restaurantName, post.restaurantAddress);
-    const postWithLocation = resolvedLocation ? { ...post, restaurantLocation: resolvedLocation } : post;
+    const details = await resolveRestaurantDetails(post.restaurantName, post.restaurantAddress);
+    const postWithLocation = {
+      ...post,
+      restaurantLocation: details.location ?? post.restaurantLocation,
+      restaurantAddress: details.formattedAddress || post.restaurantAddress,
+    };
     await claimPostInDb(post.id, 'In-app volunteer');
     claimPost(postWithLocation, 'In-app volunteer');
     showToast('Run accepted. Opening delivery tracker…');
@@ -106,8 +114,12 @@ export default function FeedTab() {
         const claimed = await claimPostInDb(targetPost.id, claimedBy);
         if (!claimed) return;
 
-        const resolvedLocation = await resolveRestaurantLocation(targetPost.restaurantName, targetPost.restaurantAddress);
-        const postWithLocation = resolvedLocation ? { ...targetPost, restaurantLocation: resolvedLocation } : targetPost;
+        const details = await resolveRestaurantDetails(targetPost.restaurantName, targetPost.restaurantAddress);
+        const postWithLocation = {
+          ...targetPost,
+          restaurantLocation: details.location ?? targetPost.restaurantLocation,
+          restaurantAddress: details.formattedAddress || targetPost.restaurantAddress,
+        };
 
         claimPost(postWithLocation, claimedBy);
         showToast('Run claimed from SMS link! Opening delivery tracker…');
