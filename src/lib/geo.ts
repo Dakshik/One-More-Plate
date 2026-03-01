@@ -1,4 +1,5 @@
 import type { LatLng, Shelter } from '../types';
+import { SEED_POSTS } from '../data/seed';
 
 const EARTH_RADIUS_MILES = 3958.8;
 
@@ -34,4 +35,56 @@ export function getNearestShelter(origin: LatLng, shelters: Shelter[]): Shelter 
       ? shelter
       : closest
   );
+}
+
+function normalize(str: string): string {
+  return str.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+export function lookupKnownRestaurantLocation(name: string): LatLng | null {
+  const query = normalize(name);
+  if (!query) return null;
+
+  const found = SEED_POSTS.find(post => {
+    const candidate = normalize(post.restaurantName);
+    return candidate.includes(query) || query.includes(candidate);
+  });
+
+  return found?.restaurantLocation ?? null;
+}
+
+export async function geocodeAddress(address: string): Promise<LatLng | null> {
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (!apiKey || !address.trim()) return null;
+
+  try {
+    const params = new URLSearchParams({
+      address,
+      key: apiKey,
+    });
+    const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`);
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      status?: string;
+      results?: Array<{ geometry: { location: LatLng } }>;
+    };
+
+    if (data.status !== 'OK' || !data.results?.[0]) return null;
+    return data.results[0].geometry.location;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveRestaurantLocation(name: string, address?: string): Promise<LatLng | null> {
+  const known = lookupKnownRestaurantLocation(name);
+  if (known) return known;
+
+  const addr = address?.trim();
+  if (addr) {
+    const byAddress = await geocodeAddress(addr);
+    if (byAddress) return byAddress;
+  }
+
+  return geocodeAddress(`${name}, Newark, DE 19711`);
 }

@@ -3,7 +3,7 @@ import { usePosts, claimPostInDb } from '../lib/db';
 import { useApp } from '../lib/store';
 import { Eyebrow, Chip } from './UI';
 import type { FoodPost } from '../types';
-import { getNearestShelter } from '../lib/geo';
+import { getNearestShelter, resolveRestaurantLocation } from '../lib/geo';
 import { SHELTERS } from '../data/seed';
 import { buildAcceptedRunSMS, sendSMS } from '../lib/sms';
 
@@ -18,8 +18,10 @@ function FeedCard({ post }: { post: FoodPost }) {
   const { user, showToast, claimPost } = useApp();
 
   const handleClaim = async () => {
+    const resolvedLocation = await resolveRestaurantLocation(post.restaurantName, post.restaurantAddress);
+    const postWithLocation = resolvedLocation ? { ...post, restaurantLocation: resolvedLocation } : post;
     await claimPostInDb(post.id, user.firstName);
-    claimPost(post, user.firstName);
+    claimPost(postWithLocation, user.firstName);
     showToast('Run claimed! Opening delivery tracker…');
   };
 
@@ -67,8 +69,10 @@ export default function FeedTab() {
     : null;
 
   const handleQuickAccept = async (post: FoodPost) => {
+    const resolvedLocation = await resolveRestaurantLocation(post.restaurantName, post.restaurantAddress);
+    const postWithLocation = resolvedLocation ? { ...post, restaurantLocation: resolvedLocation } : post;
     await claimPostInDb(post.id, 'In-app volunteer');
-    claimPost(post, 'In-app volunteer');
+    claimPost(postWithLocation, 'In-app volunteer');
     showToast('Run accepted. Opening delivery tracker…');
   };
 
@@ -102,18 +106,21 @@ export default function FeedTab() {
         const claimed = await claimPostInDb(targetPost.id, claimedBy);
         if (!claimed) return;
 
-        claimPost(targetPost, claimedBy);
+        const resolvedLocation = await resolveRestaurantLocation(targetPost.restaurantName, targetPost.restaurantAddress);
+        const postWithLocation = resolvedLocation ? { ...targetPost, restaurantLocation: resolvedLocation } : targetPost;
+
+        claimPost(postWithLocation, claimedBy);
         showToast('Run claimed from SMS link! Opening delivery tracker…');
 
         if (phone) {
-          const shelter = getNearestShelter(targetPost.restaurantLocation, SHELTERS);
+          const shelter = getNearestShelter(postWithLocation.restaurantLocation, SHELTERS);
           await sendSMS(
             phone,
             buildAcceptedRunSMS({
-              restaurantName: targetPost.restaurantName,
-              foodDescription: targetPost.foodDescription,
-              portions: targetPost.portions,
-              pickupBy: targetPost.pickupBy,
+              restaurantName: postWithLocation.restaurantName,
+              foodDescription: postWithLocation.foodDescription,
+              portions: postWithLocation.portions,
+              pickupBy: postWithLocation.pickupBy,
               shelterName: shelter.name,
               shelterAddress: shelter.address,
             })

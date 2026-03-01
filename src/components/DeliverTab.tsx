@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { useApp } from '../lib/store';
 import { Eyebrow, Divider } from './UI';
 import RouteMap from './RouteMap';
@@ -45,9 +45,11 @@ export default function DeliverTab() {
   const { activeRun, showToast, setActiveTab, updateStats } = useApp();
   const [phase, setPhase] = useState<RunPhase>('to_restaurant');
   const [photoUploaded, setPhotoUploaded] = useState(false);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationError, setLocationError] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const pickupCountdown = useCountdown(activeRun?.estimatedPickupTime ?? null);
   const deliveryCountdown = useCountdown(activeRun?.estimatedDeliveryTime ?? null);
@@ -69,6 +71,10 @@ export default function DeliverTab() {
     }
   }, [activeRun]);
 
+  useEffect(() => () => {
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+  }, [photoPreviewUrl]);
+
   const openMapsDirections = (dest: { lat: number; lng: number }, label: string) => {
     let url: string;
     if (userLocation) {
@@ -81,13 +87,26 @@ export default function DeliverTab() {
   };
 
   const handlePhotoUpload = () => {
+    photoInputRef.current?.click();
+  };
+
+  const handlePhotoSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    const preview = URL.createObjectURL(file);
+    setPhotoPreviewUrl(preview);
     setPhotoUploaded(true);
-    showToast('📸 Photo confirmed!');
+    showToast('📸 Photo captured!');
+    event.target.value = '';
   };
 
   const handlePickupConfirmed = () => {
     if (!activeRun) return;
     setPhase('to_shelter');
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    setPhotoPreviewUrl(null);
     setPhotoUploaded(false);
     showToast('✅ Pickup confirmed — heading to shelter!');
     setTimeout(() => openMapsDirections(activeRun.shelter.location, activeRun.shelter.name), 800);
@@ -168,6 +187,14 @@ export default function DeliverTab() {
       </div>
 
       <div className="body" style={{ paddingTop: 16 }}>
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePhotoSelected}
+          style={{ display: 'none' }}
+        />
 
         <div className="route-card">
           <div className="route-map">
@@ -273,6 +300,13 @@ export default function DeliverTab() {
               <div className="photo-icon">{photoUploaded ? '✅' : '📸'}</div>
               <div className="photo-label">{photoUploaded ? 'Photo confirmed' : 'Take a photo of the food'}</div>
               <div className="photo-sub">{photoUploaded ? 'Tap below — shelter directions open automatically' : 'Confirms you picked up the food'}</div>
+              {photoPreviewUrl && (
+                <img
+                  src={photoPreviewUrl}
+                  alt="Pickup proof"
+                  style={{ width: '100%', maxWidth: 260, borderRadius: 8, marginTop: 10, border: '1px solid var(--border)' }}
+                />
+              )}
             </div>
             <button className="btn btn-sage" onClick={handlePickupConfirmed} disabled={!photoUploaded} style={{ opacity: photoUploaded ? 1 : 0.4 }}>
               ✅ Food collected — open shelter directions →
@@ -287,6 +321,13 @@ export default function DeliverTab() {
               <div className="photo-icon">{photoUploaded ? '✅' : '📸'}</div>
               <div className="photo-label">{photoUploaded ? 'Delivery confirmed' : 'Take a photo at the shelter'}</div>
               <div className="photo-sub">{photoUploaded ? 'Tap below to complete the run' : 'Proves food was delivered safely'}</div>
+              {photoPreviewUrl && (
+                <img
+                  src={photoPreviewUrl}
+                  alt="Delivery proof"
+                  style={{ width: '100%', maxWidth: 260, borderRadius: 8, marginTop: 10, border: '1px solid var(--border)' }}
+                />
+              )}
             </div>
             <button className="btn" onClick={handleCompleteRun} disabled={!photoUploaded} style={{ opacity: photoUploaded ? 1 : 0.4 }}>
               🎉 Mark run as complete
