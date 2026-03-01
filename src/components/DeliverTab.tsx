@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { useApp } from '../lib/store';
 import { Eyebrow, Divider } from './UI';
 import RouteMap from './RouteMap';
+import { distanceMiles } from '../lib/geo';
 
 const PAST_DELIVERIES = [
   { emoji: '🍕', restaurant: 'Iron Hill Brewery', detail: 'Feb 24 · 18 portions · Food Bank of DE' },
@@ -23,22 +24,38 @@ function formatTime(date: Date) {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-function useCountdown(targetTime: Date | null) {
-  const [remaining, setRemaining] = useState('');
-  useEffect(() => {
-    if (!targetTime) return;
-    const update = () => {
-      const diff = targetTime.getTime() - Date.now();
-      if (diff <= 0) { setRemaining('Now'); return; }
-      const mins = Math.floor(diff / 60000);
-      const secs = Math.floor((diff % 60000) / 1000);
-      setRemaining(`${mins}m ${secs}s`);
-    };
-    update();
-    const t = setInterval(update, 1000);
-    return () => clearInterval(t);
-  }, [targetTime]);
-  return remaining;
+function fallbackEtaMinutes(origin: { lat: number; lng: number }, destination: { lat: number; lng: number }): number {
+  const miles = distanceMiles(origin, destination);
+  const avgCityMph = 24;
+  return Math.max(2, Math.round((miles / avgCityMph) * 60));
+}
+
+async function getDrivingEtaMinutes(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number }
+): Promise<number> {
+  if (window.google?.maps?.DirectionsService) {
+    const directionsService = new window.google.maps.DirectionsService();
+    const eta = await new Promise<number | null>((resolve) => {
+      directionsService.route(
+        {
+          origin,
+          destination,
+          travelMode: window.google.maps.TravelMode.DRIVING,
+        },
+        (result, status) => {
+          if (status !== 'OK' || !result?.routes?.[0]?.legs?.[0]?.duration?.value) {
+            resolve(null);
+            return;
+          }
+          resolve(Math.max(1, Math.round(result.routes[0].legs[0].duration.value / 60)));
+        }
+      );
+    });
+    if (eta !== null) return eta;
+  }
+
+  return fallbackEtaMinutes(origin, destination);
 }
 
 export default function DeliverTab() {
@@ -53,14 +70,26 @@ export default function DeliverTab() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationError, setLocationError] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
+  const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
+  const [etaLoading, setEtaLoading] = useState(false);
   const livePhotoInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const completionTimeoutRef = useRef<number | null>(null);
-
-  const pickupCountdown = useCountdown(activeRun?.estimatedPickupTime ?? null);
-  const deliveryCountdown = useCountdown(activeRun?.estimatedDeliveryTime ?? null);
+  const dest = !activeRun
+    ? null
+    : phase === 'to_restaurant'
+      ? activeRun.post.restaurantLocation
+      : activeRun.shelter.location;
+  const destLabel = !activeRun
+    ? ''
+    : phase === 'to_restaurant'
+      ? activeRun.post.restaurantName
+      : activeRun.shelter.name;
+  const routeOrigin = activeRun ? (userLocation ?? activeRun.volunteer.location) : null;
+  const liveMiles = routeOrigin && dest ? Number(distanceMiles(routeOrigin, dest).toFixed(1)) : 0;
+  const etaLabel = etaLoading ? '...' : etaMinutes !== null ? `${etaMinutes} min` : 'N/A';
 
   useEffect(() => {
     if (!activeRun) {
@@ -70,7 +99,7 @@ export default function DeliverTab() {
     }
     if (navigator.geolocation) {
       setLocationLoading(true);
-      navigator.geolocation.getCurrentPosition(
+      const watchId = navigator.geolocation.watchPosition(
         (pos) => {
           setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
           setLocationLoading(false);
@@ -79,8 +108,9 @@ export default function DeliverTab() {
           setLocationError(true);
           setLocationLoading(false);
         },
-        { enableHighAccuracy: true }
+        { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 }
       );
+      return () => navigator.geolocation.clearWatch(watchId);
     }
   }, [activeRun?.id]);
 
@@ -92,6 +122,8 @@ export default function DeliverTab() {
     setPhotoSource(null);
     stopCameraStream();
     setCameraOpen(false);
+    setEtaMinutes(null);
+    setEtaLoading(false);
     setPhotoPreviewUrl(prev => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -119,6 +151,32 @@ export default function DeliverTab() {
   useEffect(() => () => {
     stopCameraStream();
   }, []);
+
+  useEffect(() => {
+    if (!activeRun || !routeOrigin || !dest || phase === 'complete') {
+      setEtaLoading(false);
+      setEtaMinutes(null);
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: number | null = null;
+    const updateEta = async () => {
+      setEtaLoading(true);
+      const minutes = await getDrivingEtaMinutes(routeOrigin, dest);
+      if (cancelled) return;
+      setEtaMinutes(minutes);
+      setEtaLoading(false);
+    };
+
+    void updateEta();
+    intervalId = window.setInterval(() => void updateEta(), 45000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [activeRun?.id, phase, routeOrigin?.lat, routeOrigin?.lng, dest?.lat, dest?.lng]);
 
   const openMapsDirections = (dest: { lat: number; lng: number }, label: string) => {
     let url: string;
@@ -255,24 +313,16 @@ export default function DeliverTab() {
     );
   }
 
-  const dest = phase === 'to_restaurant'
-    ? activeRun.post.restaurantLocation
-    : activeRun.shelter.location;
-
-  const destLabel = phase === 'to_restaurant'
-    ? activeRun.post.restaurantName
-    : activeRun.shelter.name;
-
   const steps: RunStep[] = phase === 'to_restaurant' ? [
     { icon: '✅', title: 'Run accepted', sub: `Accepted at ${formatTime(activeRun.acceptedAt)}`, status: 'done' },
-    { icon: '🚗', title: `Drive to ${activeRun.post.restaurantName}`, sub: `${activeRun.post.restaurantAddress} · ETA ${pickupCountdown}`, status: 'current' },
+    { icon: '🚗', title: `Drive to ${activeRun.post.restaurantName}`, sub: `${activeRun.post.restaurantAddress} · ETA ${etaLabel}`, status: 'current' },
     { icon: '📦', title: 'Collect food', sub: `${activeRun.post.portions} portions · ${activeRun.post.condition} · by ${activeRun.post.pickupBy}`, status: 'pending' },
     { icon: '🏠', title: `Drop off at ${activeRun.shelter.name}`, sub: activeRun.shelter.address, status: 'pending' },
     { icon: '✔️', title: 'Complete run', sub: 'Mark as done', status: 'pending' },
   ] : phase === 'to_shelter' ? [
     { icon: '✅', title: 'Run accepted', sub: `Accepted at ${formatTime(activeRun.acceptedAt)}`, status: 'done' },
     { icon: '✅', title: `Collected from ${activeRun.post.restaurantName}`, sub: `${activeRun.post.portions} portions picked up`, status: 'done' },
-    { icon: '🚗', title: `Drive to ${activeRun.shelter.name}`, sub: `${activeRun.shelter.address} · ETA ${deliveryCountdown}`, status: 'current' },
+    { icon: '🚗', title: `Drive to ${activeRun.shelter.name}`, sub: `${activeRun.shelter.address} · ETA ${etaLabel}`, status: 'current' },
     { icon: '📸', title: 'Drop off & confirm', sub: 'Take a photo at the shelter', status: 'pending' },
     { icon: '✔️', title: 'Complete run', sub: 'Mark as done', status: 'pending' },
   ] : [
@@ -299,9 +349,9 @@ export default function DeliverTab() {
         </div>
         <div className="run-status-sub">
           {phase === 'to_restaurant'
-            ? `${activeRun.post.portions} portions · by ${activeRun.post.pickupBy} · ETA ${pickupCountdown}`
+            ? `${activeRun.post.portions} portions · by ${activeRun.post.pickupBy} · ETA ${etaLabel}`
             : phase === 'to_shelter'
-            ? `Drop off ${activeRun.post.portions} portions · ETA ${deliveryCountdown}`
+            ? `Drop off ${activeRun.post.portions} portions · ETA ${etaLabel}`
             : 'Delivery confirmed · +1 run added to your profile'}
         </div>
       </div>
@@ -333,7 +383,7 @@ export default function DeliverTab() {
             ) : (
               <RouteMap
                 origin={userLocation ?? activeRun.volunteer.location}
-                destination={dest}
+                destination={dest!}
                 volunteerLocation={userLocation ?? activeRun.volunteer.location}
                 originLabel="You"
                 destinationLabel={destLabel}
@@ -342,15 +392,11 @@ export default function DeliverTab() {
           </div>
           <div className="route-details">
             <div className="route-stat">
-              <div className="route-stat-n">
-                {phase === 'to_restaurant' ? activeRun.distanceToRestaurant : activeRun.distanceToShelter}
-              </div>
+              <div className="route-stat-n">{liveMiles}</div>
               <div className="route-stat-l">Miles</div>
             </div>
             <div className="route-stat">
-              <div className="route-stat-n">
-                {phase === 'to_restaurant' ? pickupCountdown : deliveryCountdown}
-              </div>
+              <div className="route-stat-n">{etaLabel}</div>
               <div className="route-stat-l">ETA</div>
             </div>
             <div className="route-stat">
@@ -363,7 +409,7 @@ export default function DeliverTab() {
         {phase !== 'complete' && (
           <button
             className={`btn ${phase === 'to_shelter' ? 'btn-sage' : ''}`}
-            onClick={() => openMapsDirections(dest, destLabel)}
+            onClick={() => openMapsDirections(dest!, destLabel)}
             style={{ marginBottom: 10 }}
           >
             🗺️ Get directions to {destLabel}
