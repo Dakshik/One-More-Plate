@@ -18,6 +18,22 @@ interface DBPost {
   created_at: string;
 }
 
+interface DBVolunteer {
+  id: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  max_distance_miles: number;
+}
+
+export interface VolunteerContact {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  maxDistanceMiles: number;
+}
+
 function dbToPost(row: DBPost): FoodPost {
   return {
     id: row.id,
@@ -39,6 +55,7 @@ function dbToPost(row: DBPost): FoodPost {
 export function usePosts() {
   const [posts, setPosts] = useState<FoodPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [newPostPing, setNewPostPing] = useState<FoodPost | null>(null);
 
   const fetchPosts = useCallback(async () => {
     const { data, error } = await supabase
@@ -58,7 +75,11 @@ export function usePosts() {
     // Real-time subscription — updates instantly when anyone posts or claims
     const channel = supabase
       .channel('posts-channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, (payload) => {
+        if (payload.eventType === 'INSERT' && payload.new) {
+          const inserted = dbToPost(payload.new as DBPost);
+          setNewPostPing(inserted);
+        }
         fetchPosts();
       })
       .subscribe();
@@ -66,7 +87,7 @@ export function usePosts() {
     return () => { supabase.removeChannel(channel); };
   }, [fetchPosts]);
 
-  return { posts, loading, refetch: fetchPosts };
+  return { posts, loading, refetch: fetchPosts, newPostPing };
 }
 
 // ── Add a new post ──
@@ -125,4 +146,26 @@ export async function saveVolunteer(volunteer: {
 
   if (error) { console.error('Volunteer insert error:', error); return false; }
   return true;
+}
+
+export async function getNearbyVolunteers(maxRadiusMiles: number, limit = 3): Promise<VolunteerContact[]> {
+  const { data, error } = await supabase
+    .from('volunteers')
+    .select('id, first_name, last_name, phone, max_distance_miles')
+    .gte('max_distance_miles', maxRadiusMiles)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('Volunteer fetch error:', error);
+    return [];
+  }
+
+  return (data as DBVolunteer[]).map(v => ({
+    id: v.id,
+    firstName: v.first_name,
+    lastName: v.last_name,
+    phone: v.phone,
+    maxDistanceMiles: v.max_distance_miles,
+  }));
 }

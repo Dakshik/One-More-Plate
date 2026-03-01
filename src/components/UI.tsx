@@ -54,10 +54,10 @@ export function GeminiCard({ children, label = 'Gemini · Analysis' }: { childre
   );
 }
 
-export function ShelterNotif({ children }: { children: ReactNode }) {
+export function ShelterNotif({ children, shelterName }: { children: ReactNode; shelterName: string }) {
   return (
     <div className="shelter-notif">
-      <div className="shelter-notif-head">🏠 Shelter Notified · Food Bank of Delaware</div>
+      <div className="shelter-notif-head">🏠 Shelter Notified · {shelterName}</div>
       <div className="shelter-notif-body">{children}</div>
     </div>
   );

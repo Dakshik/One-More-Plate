@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import type { FoodPost, DeliveryRun, UserAccount, CommunityStats } from '../types';
 import { MOCK_USER, COMMUNITY_STATS, SHELTERS } from '../data/seed';
+import { distanceMiles, getNearestShelter } from './geo';
 
 type Tab = 'post' | 'feed' | 'deliver' | 'volunteer' | 'account';
 
@@ -9,7 +10,7 @@ interface AppState {
   setActiveTab: (t: Tab) => void;
   posts: FoodPost[];
   addPost: (p: FoodPost) => void;
-  claimPost: (id: string) => void;
+  claimPost: (post: FoodPost, claimedBy?: string) => void;
   activeRun: DeliveryRun | null;
   setActiveRun: (r: DeliveryRun | null) => void;
   user: UserAccount;
@@ -35,41 +36,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const addPost = (p: FoodPost) => setPosts(prev => [p, ...prev]);
 
-  const claimPost = (id: string) => {
-    setPosts(prev => prev.map(p => {
-      if (p.id !== id) return p;
-      const claimed = { ...p, claimed: true, claimedBy: user.firstName };
+  const claimPost = (post: FoodPost, claimedBy = user.firstName) => {
+    const claimed = { ...post, claimed: true, claimedBy };
+    const now = new Date();
+    const volunteerLocation = { lat: 39.6855, lng: -75.751 };
+    const acceptingShelters = SHELTERS.filter(s => s.acceptingNow);
+    const shelter = getNearestShelter(post.restaurantLocation, acceptingShelters.length ? acceptingShelters : SHELTERS);
 
-      const now = new Date();
-      const run: DeliveryRun = {
-        id: `run-${Date.now()}`,
-        post: claimed,
-        volunteer: {
-          id: user.id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          phone: '3027470804',
-          vehicle: user.vehicle ?? 'car',
-          maxDistanceMiles: 5,
-          availability: [],
-          location: { lat: 39.6855, lng: -75.751 },
-          totalRuns: user.totalRuns,
-          totalMeals: user.totalMealsRescued,
-        },
-        shelter: SHELTERS[0],
-        status: 'accepted',
-        acceptedAt: now,
-        estimatedPickupTime: new Date(now.getTime() + 8 * 60000),
-        estimatedDeliveryTime: new Date(now.getTime() + 25 * 60000),
-        photoConfirmed: false,
-        distanceToRestaurant: 0.4,
-        distanceToShelter: 1.7,
-      };
+    const run: DeliveryRun = {
+      id: `run-${Date.now()}`,
+      post: claimed,
+      volunteer: {
+        id: user.id,
+        firstName: claimedBy,
+        lastName: user.lastName,
+        phone: '3027470804',
+        vehicle: user.vehicle ?? 'car',
+        maxDistanceMiles: 5,
+        availability: [],
+        location: volunteerLocation,
+        totalRuns: user.totalRuns,
+        totalMeals: user.totalMealsRescued,
+      },
+      shelter,
+      status: 'accepted',
+      acceptedAt: now,
+      estimatedPickupTime: new Date(now.getTime() + 8 * 60000),
+      estimatedDeliveryTime: new Date(now.getTime() + 25 * 60000),
+      photoConfirmed: false,
+      distanceToRestaurant: Number(distanceMiles(volunteerLocation, post.restaurantLocation).toFixed(1)),
+      distanceToShelter: Number(distanceMiles(post.restaurantLocation, shelter.location).toFixed(1)),
+    };
 
-      setActiveRun(run);
-      setActiveTab('deliver');
-      return claimed;
-    }));
+    setPosts(prev => [claimed, ...prev.filter(p => p.id !== claimed.id)]);
+    setActiveRun(run);
+    setActiveTab('deliver');
   };
 
   const updateStats = (delta: Partial<CommunityStats>) =>

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useApp } from './lib/store';
 import Header from './components/Header';
 import PostTab from './components/PostTab';
@@ -14,7 +15,14 @@ function Toast() {
 }
 
 export default function App() {
-  const { activeTab } = useApp();
+  const { activeTab, setActiveTab } = useApp();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('claim') || params.get('decline')) {
+      setActiveTab('feed');
+    }
+  }, [setActiveTab]);
 
   return (
     <div className="app">

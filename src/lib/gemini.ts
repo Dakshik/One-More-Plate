@@ -8,7 +8,8 @@ export async function analyzeAndStructureFoodPost(
   foodDescription: string,
   portions: number,
   pickupBy: string,
-  condition: FoodCondition
+  condition: FoodCondition,
+  dropoffShelterName = 'Food Bank of Delaware'
 ): Promise<GeminiPostAnalysis> {
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
@@ -21,6 +22,7 @@ Food: ${foodDescription}
 Portions: ${portions}
 Pickup by: ${pickupBy}
 Condition: ${condition}
+Nearest shelter: ${dropoffShelterName}
 
 Return ONLY valid JSON with this exact structure:
 {
@@ -28,7 +30,7 @@ Return ONLY valid JSON with this exact structure:
   "estimatedKg": <number, estimate total kg based on portions>,
   "estimatedCo2Saved": <number, kg CO2 saved vs landfill, roughly 2.5x food weight>,
   "urgencyLevel": <"low" | "medium" | "high" based on condition and time>,
-  "whatsappMessage": "WhatsApp notification to send volunteers, include emoji, restaurant name, food, portions, pickup time, drop-off shelter (Food Bank of Delaware)",
+  "dispatchMessage": "SMS notification to send volunteers, include emoji, restaurant name, food, portions, pickup time, drop-off shelter",
   "tags": ["array", "of", "3-5", "short", "descriptive", "tags"],
   "distributionRecommendation": "One sentence on best way to distribute this food"
 }
@@ -47,7 +49,7 @@ Return ONLY valid JSON with this exact structure:
       estimatedKg: kg,
       estimatedCo2Saved: +(kg * 2.5).toFixed(1),
       urgencyLevel: condition === 'hot' ? 'high' : condition === 'cold' ? 'low' : 'medium',
-      whatsappMessage: `🍽️ Food pickup available!\n\n📍 ${restaurantName} · Newark, DE\n🥘 ${foodDescription} — ${portions} portions\n⏰ Collect by ${pickupBy}\n🏠 Drop off: Food Bank of Delaware\n\nReply YES to take this run.`,
+      dispatchMessage: `🍽️ Food pickup available!\n\n📍 ${restaurantName} · Newark, DE\n🥘 ${foodDescription} — ${portions} portions\n⏰ Collect by ${pickupBy}\n🏠 Drop off: ${dropoffShelterName}\n\nTap to claim this run.`,
       tags: [condition === 'hot' ? '🔥 Hot' : '♨️ Warm', `${portions} portions`, 'Pickup tonight'],
       distributionRecommendation: `Distribute immediately — suitable for direct hot meal service at the shelter.`,
     };
@@ -65,7 +67,7 @@ export async function generateVolunteerMatchMessage(
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   const prompt = `
-Write a brief, friendly WhatsApp notification message for a food rescue volunteer.
+Write a brief, friendly SMS notification message for a food rescue volunteer.
 Keep it under 80 words. Use a warm but urgent tone. Include emojis.
 
 Volunteer: ${volunteerName}

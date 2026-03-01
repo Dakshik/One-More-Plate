@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { analyzeAndStructureFoodPost } from '../lib/gemini';
-import { addPostToDb } from '../lib/db';
-import { sendSMS, buildPickupSMS } from '../lib/sms';
+import { addPostToDb, getNearbyVolunteers } from '../lib/db';
+import { buildPickupSMS, sendSMS } from '../lib/sms';
 import { useApp } from '../lib/store';
-import { GeminiCard, Tag, Button, ShelterNotif, Eyebrow } from './UI';
+import { GeminiCard, Tag, Button, Eyebrow } from './UI';
 import type { FoodCondition, FoodPost, GeminiPostAnalysis } from '../types';
-import { NEWARK_CENTER } from '../data/seed';
+import { NEWARK_CENTER, REGISTERED_VOLUNTEERS, SHELTERS } from '../data/seed';
+import { getNearestShelter } from '../lib/geo';
 
 type PostState = 'form' | 'processing' | 'result';
 
@@ -17,14 +18,14 @@ const PROC_STEPS = [
 ];
 
 export default function PostTab() {
-  const { showToast, updateStats } = useApp();
+  const { setActiveTab } = useApp();
   const [state, setState] = useState<PostState>('form');
   const [procStep, setProcStep] = useState(0);
   const [analysis, setAnalysis] = useState<GeminiPostAnalysis | null>(null);
   const [currentPost, setCurrentPost] = useState<FoodPost | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
-  const [skippedVol, setSkippedVol] = useState(false);
-  const [shelterShown, setShelterShown] = useState(false);
+  const [notifiedCount, setNotifiedCount] = useState(0);
+  const [targetShelterName, setTargetShelterName] = useState('Food Bank of Delaware');
+  const [notifiedVolunteers, setNotifiedVolunteers] = useState<{ name: string; distanceMiles: number }[]>([]);
 
   const [name, setName] = useState('');
   const [food, setFood] = useState('');
@@ -52,7 +53,10 @@ export default function PostTab() {
       await new Promise(r => setTimeout(r, 700));
     }
 
-    const result = await analyzeAndStructureFoodPost(rName, rFood, rPortions, rTime, condition);
+    const acceptingShelters = SHELTERS.filter(s => s.acceptingNow);
+    const targetShelter = getNearestShelter(NEWARK_CENTER, acceptingShelters.length ? acceptingShelters : SHELTERS);
+    setTargetShelterName(targetShelter.name);
+    const result = await analyzeAndStructureFoodPost(rName, rFood, rPortions, rTime, condition, targetShelter.name);
     setAnalysis(result);
 
     const post: FoodPost = {
@@ -80,43 +84,46 @@ export default function PostTab() {
       geminiSummary: result,
     });
 
-    // Send real SMS to Dakshi
-    sendSMS('3027470804', buildPickupSMS(
-      rName,
-      rFood,
-      rPortions,
-      rTime,
-      `${rName}, Newark, DE 19711`
-    ));
+    const postId = saved?.id ?? post.id;
+    const nearbyFromDb = await getNearbyVolunteers(1, 3);
+
+    const volunteers: { name: string; phone: string; distanceMiles: number }[] = nearbyFromDb.length > 0
+      ? nearbyFromDb.map((v, i) => ({
+        name: `${v.firstName} ${v.lastName.charAt(0)}.`,
+        phone: v.phone,
+        distanceMiles: Number((0.4 + i * 0.2).toFixed(1)),
+      }))
+      : REGISTERED_VOLUNTEERS.map(v => ({
+        name: `${v.firstName} ${v.lastName.charAt(0)}.`,
+        phone: v.phone,
+        distanceMiles: v.distanceMiles,
+      }));
+
+    const sent = await Promise.all(
+      volunteers.map(v =>
+        sendSMS(
+          v.phone,
+          buildPickupSMS(postId, rName, rFood, rPortions, rTime, targetShelter.name, v.phone)
+        )
+      )
+    );
+    const sentCount = sent.filter(Boolean).length;
+    setNotifiedCount(sentCount);
+    setNotifiedVolunteers(volunteers);
 
     setCurrentPost(saved ?? post);
     setState('result');
   };
 
-  const handleConfirm = () => {
-    setConfirmed(true);
-    setShelterShown(true);
-    updateStats({ mealsThisWeek: 20, kgSaved: 5, co2Avoided: 10 });
-    showToast('🎉 Run confirmed — shelter notified!');
-  };
-
-  const handleSkip = () => setSkippedVol(true);
-
   const handleReset = () => {
     setState('form');
     setAnalysis(null);
     setCurrentPost(null);
-    setConfirmed(false);
-    setSkippedVol(false);
-    setShelterShown(false);
+    setNotifiedCount(0);
+    setTargetShelterName('Food Bank of Delaware');
+    setNotifiedVolunteers([]);
     setName(''); setFood(''); setPortions(''); setTime('23:00'); setCondition('hot');
   };
-
-  const eta = new Date();
-  eta.setMinutes(eta.getMinutes() + 25);
-  const etaStr = eta.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const volName = skippedVol ? 'Sarah K.' : 'Dakshi K.';
-  const volDist = skippedVol ? '0.7' : '0.4';
 
   return (
     <div className="body">
@@ -178,60 +185,35 @@ export default function PostTab() {
             </p>
           </GeminiCard>
 
-          <div className="wa-wrap">
-            <div className="wa-bar">
-              <div className="wa-av">🧑</div>
-              <div>
-                <div className="wa-name">{volName} — Volunteer</div>
-                <div className="wa-dist">{volDist} miles away · SMS sent ✓</div>
-              </div>
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--warm-grey)', marginBottom: 8 }}>
+              Dispatch status
             </div>
-            <div className="wa-chat">
-              <div className="wa-msg">
-                <div className="wa-msg-text" style={{ whiteSpace: 'pre-line' }}>{analysis.whatsappMessage}</div>
-                <div className="wa-msg-time">{new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
-              </div>
-              {!confirmed ? (
-                <div className="wa-btns">
-                  <button className="wa-btn yes" onClick={handleConfirm}>✓ Yes, I'll go</button>
-                  {!skippedVol
-                    ? <button className="wa-btn no" onClick={handleSkip}>✗ Can't make it</button>
-                    : <div style={{ padding: '8px', fontSize: 11, color: '#999' }}>Sarah K. notified…</div>
-                  }
-                </div>
-              ) : (
-                <div className="wa-btns">
-                  <button className="wa-btn yes confirmed">✓ Confirmed!</button>
-                </div>
-              )}
+            <div style={{ fontSize: 13, color: 'var(--ink2)', lineHeight: 1.6, marginBottom: 10 }}>
+              SMS alert sent to <strong>{notifiedCount || notifiedVolunteers.length || 1}</strong> nearby volunteer(s).
+              Accept/decline now happens via SMS or from the <strong>Available</strong> tab.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              {notifiedVolunteers.map(vol => (
+                <Tag key={vol.name}>{vol.name} · {vol.distanceMiles} mi</Tag>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--warm-grey)', whiteSpace: 'pre-line' }}>
+              {analysis.dispatchMessage || analysis.whatsappMessage}
             </div>
           </div>
-
-          {shelterShown && (
-            <ShelterNotif>
-              <strong>{volName}</strong> is on the way.<br />
-              Estimated arrival: <strong>{etaStr}</strong><br /><br />
-              Please have someone at the main entrance to receive the delivery.
-            </ShelterNotif>
-          )}
 
           <div className="timeline">
             <div className="t-row"><div className="t-dot done" /><div className="t-text done">Restaurant posted surplus</div></div>
-            <div className="t-row"><div className="t-dot done" /><div className="t-text done">Gemini structured post — SMS sent to volunteers</div></div>
+            <div className="t-row"><div className="t-dot done" /><div className="t-text done">Gemini structured post — SMS sent to {notifiedCount || notifiedVolunteers.length || 1} volunteers</div></div>
             <div className="t-row">
-              <div className={`t-dot ${confirmed ? 'done' : 'now'}`} />
-              <div className={`t-text ${confirmed ? 'done' : ''}`}>
-                {confirmed ? `${volName} confirmed — en route` : 'Waiting for volunteer confirmation…'}
-              </div>
+              <div className="t-dot now" />
+              <div className="t-text">Waiting for volunteer to claim (SMS or Available tab)…</div>
             </div>
-            <div className="t-row">
-              <div className={`t-dot ${shelterShown ? 'done' : ''}`} />
-              <div className={`t-text ${shelterShown ? 'done' : ''}`}>
-                {shelterShown ? `Shelter notified · ETA ${etaStr}` : 'Shelter notified with ETA'}
-              </div>
-            </div>
+            <div className="t-row"><div className="t-dot" /><div className="t-text">Drop-off destination: {targetShelterName}</div></div>
           </div>
 
+          <Button variant="sage" onClick={() => setActiveTab('feed')} className="mt-16">Go to available pickups →</Button>
           <Button variant="outline" onClick={handleReset} className="mt-16">Post another →</Button>
         </>
       )}

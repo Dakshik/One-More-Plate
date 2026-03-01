@@ -34,7 +34,7 @@ export default function VolunteerTab() {
     const distLabel = maxDist === 'any' ? 'any distance' : `${maxDist} mile${parseInt(maxDist) > 1 ? 's' : ''}`;
     const vehicleLabel = VEHICLES.find(v => v.id === vehicle)?.label || vehicle;
 
-    setProfileText(`You're registered as a volunteer driver in Newark, DE. Vehicle: ${vehicleLabel}. Max distance: ${distLabel}. Available: ${availability.join(', ') || 'Flexible'}. You'll receive WhatsApp pings when a pickup matches your profile — accept or decline each one freely.`);
+    setProfileText(`You're registered as a volunteer driver in Newark, DE. Vehicle: ${vehicleLabel}. Max distance: ${distLabel}. Available: ${availability.join(', ') || 'Flexible'}. You'll receive SMS alerts when a pickup matches your profile — accept or decline each one freely.`);
     setSubmitted(true);
     setIsVolunteer(true);
     showToast(`Welcome aboard, ${name}!`);
@@ -48,7 +48,7 @@ export default function VolunteerTab() {
           You're in.
         </div>
         <div style={{ fontSize: 14, color: 'var(--warm-grey)', lineHeight: 1.7, marginBottom: 28 }}>
-          We'll send you a WhatsApp message<br />when there's a pickup nearby that<br />matches your availability.
+          We'll send you an SMS alert<br />when there's a pickup nearby that<br />matches your availability.
         </div>
         <GeminiCard label="Your volunteer profile">
           <p style={{ fontSize: 13, lineHeight: 1.65, color: 'var(--ink2)' }}>{profileText}</p>
@@ -83,7 +83,7 @@ export default function VolunteerTab() {
           </div>
         </div>
         <div className="field">
-          <label>WhatsApp number</label>
+          <label>SMS number</label>
           <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 (302) 555-0123" />
         </div>
         <div className="field">

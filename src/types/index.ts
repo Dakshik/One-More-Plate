@@ -53,7 +53,8 @@ export interface GeminiPostAnalysis {
   estimatedKg: number;
   estimatedCo2Saved: number;
   urgencyLevel: 'low' | 'medium' | 'high';
-  whatsappMessage: string;
+  dispatchMessage: string;
+  whatsappMessage?: string;
   tags: string[];
   distributionRecommendation: string;
 }

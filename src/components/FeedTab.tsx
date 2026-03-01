@@ -1,7 +1,11 @@
+import { useEffect, useRef } from 'react';
 import { usePosts, claimPostInDb } from '../lib/db';
 import { useApp } from '../lib/store';
 import { Eyebrow, Chip } from './UI';
 import type { FoodPost } from '../types';
+import { getNearestShelter } from '../lib/geo';
+import { SHELTERS } from '../data/seed';
+import { buildAcceptedRunSMS, sendSMS } from '../lib/sms';
 
 function timeAgo(date: Date): string {
   const mins = Math.floor((Date.now() - date.getTime()) / 60000);
@@ -15,7 +19,7 @@ function FeedCard({ post }: { post: FoodPost }) {
 
   const handleClaim = async () => {
     await claimPostInDb(post.id, user.firstName);
-    claimPost(post.id);
+    claimPost(post, user.firstName);
     showToast('Run claimed! Opening delivery tracker…');
   };
 
@@ -51,8 +55,84 @@ function FeedCard({ post }: { post: FoodPost }) {
 }
 
 export default function FeedTab() {
-  const { posts, loading } = usePosts();
+  const { posts, loading, newPostPing } = usePosts();
+  const { claimPost, showToast } = useApp();
+  const autoHandled = useRef(false);
+  const pingedPostIds = useRef<Set<string>>(new Set());
+  const dismissedPostIds = useRef<Set<string>>(new Set());
   const available = posts.filter(p => !p.claimed).length;
+
+  const quickPingPost = newPostPing && !newPostPing.claimed && !dismissedPostIds.current.has(newPostPing.id)
+    ? posts.find(p => p.id === newPostPing.id && !p.claimed) ?? newPostPing
+    : null;
+
+  const handleQuickAccept = async (post: FoodPost) => {
+    await claimPostInDb(post.id, 'In-app volunteer');
+    claimPost(post, 'In-app volunteer');
+    showToast('Run accepted. Opening delivery tracker…');
+  };
+
+  const handleQuickDecline = (postId: string) => {
+    dismissedPostIds.current.add(postId);
+    showToast('Pickup declined. Waiting for the next ping.');
+  };
+
+  useEffect(() => {
+    if (autoHandled.current || loading || posts.length === 0) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const claimId = params.get('claim');
+    const declineId = params.get('decline');
+    const phone = params.get('phone')?.replace(/\D/g, '');
+    if (!claimId && !declineId) return;
+
+    autoHandled.current = true;
+
+    void (async () => {
+      if (declineId) {
+        showToast('Pickup declined. We notified other volunteers.');
+        if (phone) {
+          await sendSMS(phone, '👌 You declined this pickup. Thanks for the quick response.');
+        }
+      } else if (claimId) {
+        const targetPost = posts.find(p => p.id === claimId && !p.claimed);
+        if (!targetPost) return;
+
+        const claimedBy = 'SMS Volunteer';
+        const claimed = await claimPostInDb(targetPost.id, claimedBy);
+        if (!claimed) return;
+
+        claimPost(targetPost, claimedBy);
+        showToast('Run claimed from SMS link! Opening delivery tracker…');
+
+        if (phone) {
+          const shelter = getNearestShelter(targetPost.restaurantLocation, SHELTERS);
+          await sendSMS(
+            phone,
+            buildAcceptedRunSMS({
+              restaurantName: targetPost.restaurantName,
+              foodDescription: targetPost.foodDescription,
+              portions: targetPost.portions,
+              pickupBy: targetPost.pickupBy,
+              shelterName: shelter.name,
+              shelterAddress: shelter.address,
+            })
+          );
+        }
+      }
+
+      const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+      window.history.replaceState({}, '', cleanUrl);
+    })();
+  }, [loading, posts, claimPost, showToast]);
+
+  useEffect(() => {
+    if (!newPostPing || newPostPing.claimed) return;
+    if (pingedPostIds.current.has(newPostPing.id)) return;
+
+    pingedPostIds.current.add(newPostPing.id);
+    showToast(`🔔 New pickup: ${newPostPing.restaurantName} · ${newPostPing.portions} portions`);
+  }, [newPostPing, showToast]);
 
   if (loading) {
     return (
@@ -68,6 +148,31 @@ export default function FeedTab() {
   return (
     <div className="body">
       <Eyebrow>Open pickups near Newark, DE · {available} available</Eyebrow>
+      {quickPingPost && (
+        <div className="feed-card" style={{ borderColor: 'var(--terracotta)', boxShadow: '0 4px 16px rgba(196,82,42,0.12)' }}>
+          <div className="feed-top">
+            <div className="feed-name">🔔 New pickup ping</div>
+            <div className="feed-ago">just now</div>
+          </div>
+          <div className="feed-food">
+            {quickPingPost.restaurantName} · {quickPingPost.foodDescription}
+          </div>
+          <div className="feed-chips">
+            <Chip>{quickPingPost.portions} portions</Chip>
+            <Chip variant="urgent">⏰ By {quickPingPost.pickupBy}</Chip>
+          </div>
+          <button className="claim-btn" onClick={() => void handleQuickAccept(quickPingPost)}>
+            ✅ Accept pickup →
+          </button>
+          <button
+            className="claim-btn"
+            style={{ marginTop: 8, borderColor: 'var(--warm-grey)', color: 'var(--warm-grey)' }}
+            onClick={() => handleQuickDecline(quickPingPost.id)}
+          >
+            ✖ Decline
+          </button>
+        </div>
+      )}
       {posts.length === 0 ? (
         <div className="empty">
           No pickups right now.<br />Be the first to post surplus food.

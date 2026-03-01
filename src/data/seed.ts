@@ -98,6 +98,12 @@ export const MOCK_VOLUNTEER: Volunteer = {
   totalMeals: 52,
 };
 
+export const REGISTERED_VOLUNTEERS = [
+  { id: 'rv1', firstName: 'Dakshi', lastName: 'Kaushik', phone: '3027470804', distanceMiles: 0.4 },
+  { id: 'rv2', firstName: 'Sarah', lastName: 'Kim', phone: '3025550191', distanceMiles: 0.7 },
+  { id: 'rv3', firstName: 'Miguel', lastName: 'Reyes', phone: '3025550108', distanceMiles: 0.9 },
+];
+
 export const MOCK_ACTIVE_RUN: DeliveryRun = {
   id: 'r1',
   post: SEED_POSTS[0],
